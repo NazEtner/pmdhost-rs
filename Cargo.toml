@@ -1,0 +1,13 @@
+[package]
+name = "pmdhost-rs"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+chrono = "0.4"
+cc = "1"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[dependencies]
