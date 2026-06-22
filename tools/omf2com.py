@@ -53,7 +53,7 @@ for rt,b in recs(data):
                 else:
                     _,p=idx(b,p) if method in(0,1,2) else (0,p)
             else: # FIXUP
-                loc=((b[p]&0x1f)<<8)|b[p+1]; locType=(b[p]>>2)&0xf; M=(b[p]&0x40)!=0; p+=2
+                loc=((b[p]&0x03)<<8)|b[p+1]; locType=(b[p]>>2)&0xf; M=(b[p]&0x40)!=0; p+=2
                 fd=b[p]; p+=1
                 F=(fd&0x80)!=0; frame=(fd>>4)&7; T=(fd&0x08)!=0; P=(fd&0x04)!=0; targt=fd&3
                 if not F and frame in(0,1,2): _,p=idx(b,p)
@@ -68,7 +68,7 @@ applied=0;skipped=[]
 for loc,M,lt,tdisp in fixups:
     if lt in (1,5):  # 16-bit offset
         cur=SEG[loc]|(SEG[loc+1]<<8)
-        val=(tdisp+cur)&0xffff if False else tdisp&0xffff
+        val=tdisp&0xffff
         SEG[loc]=val&0xff; SEG[loc+1]=(val>>8)&0xff; applied+=1
     else:
         skipped.append((loc,lt,M))

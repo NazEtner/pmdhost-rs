@@ -13,8 +13,10 @@ const ENABLE_B: u8 = 0x08;
 const RESET_A: u8 = 0x10;
 const RESET_B: u8 = 0x20;
 
-// ステータスビット
+// ステータスビット(TimerB-only の現状は board.rs 側の固定 status を使用。下記は M3c TimerA 用)
+#[allow(dead_code)]
 const ST_TIMER_A: u8 = 0x01; // TIA
+#[allow(dead_code)]
 const ST_TIMER_B: u8 = 0x02; // TIB
 #[allow(dead_code)]
 const ST_BUSY: u8 = 0x80; // エミュでは常に 0(即完了扱い)
@@ -90,6 +92,7 @@ impl Opna {
     }
 
     /// ステータスレジスタ(A0=0 のリード)。bit0=TIA, bit1=TIB, bit7=Busy(常に0)。
+    #[allow(dead_code)] // TimerB-only の現状は未使用。M3c の TimerA 対応で使用。
     pub fn read_status(&self) -> u8 {
         let mut s = 0;
         if self.flag_a {

@@ -10,6 +10,7 @@ pub struct PacketSend {
     pub end_sym: u8,     // 0xAA 固定
 }
 
+#[allow(dead_code)] // 一部の type ビットは M3c(board-paced)で使用
 impl PacketSend {
     pub const END_SYM: u8 = 0xAA;
 

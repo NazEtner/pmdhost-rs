@@ -10520,7 +10520,10 @@ endif
 ;==============================================================================
 wait_check:
 ife	va
-	include	wait.inc
+	mov	ax,1
+	mov	cx,1
+	mov	bx,1
+	ret
 else
 	mov	ax,1580		;V30 8MHz (9801VX/RAÇÃíl)
 	mov	cx,2		;âÒêî
