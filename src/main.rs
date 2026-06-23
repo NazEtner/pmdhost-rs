@@ -12,13 +12,14 @@ mod opna;
 mod packet;
 mod pipe;
 
-use std::time::Instant;
-
 use board::Host;
 use emu::Emu;
 use pipe::Pipe;
 
 static PMD_BIN: &[u8] = include_bytes!("../assets/pmdymf.bin");
+
+// 先読み量(driver.exe の送信キュー上限)。大きいほどボード前に曲を溜め込み、重い区間で
+// バッファ枯れ(カクつき)しにくくなる。PMDHOST_QUEUE で調整可(既定 4000 ≒ 30秒強の先読み)。
 
 // Windows のタイマ分解能を 1ms に上げる(既定 ~15.6ms だと数 ms のテンポ間隔が出せない)。
 #[link(name = "winmm")]
@@ -37,12 +38,10 @@ fn main() {
         }
     };
     let dry = std::env::var("PMDHOST_DRY").is_ok();
-    // テンポ微調整倍率(1.0=既定。速ければ大きく、遅ければ小さく)。
-    let tempo_mul: f64 = std::env::var("PMDHOST_TEMPO")
+    let queue_high: u32 = std::env::var("PMDHOST_QUEUE")
         .ok()
         .and_then(|s| s.parse().ok())
-        .filter(|v: &f64| *v > 0.0)
-        .unwrap_or(1.0);
+        .unwrap_or(4000);
 
     let song = match std::fs::read(&song_path) {
         Ok(d) => d,
@@ -66,6 +65,12 @@ fn main() {
     };
 
     let mut host = Box::new(Host::new(pipe));
+    // 前回再生の残留(driver送信キュー + ボードのバッファ/orderキュー/pendingTimers)をリセットしてから
+    // 開始する。driver 再起動なしの連続再生で残留が desync し途中フリーズするのを防ぐ。install の書込より前。
+    if let Err(e) = host.flush_reset() {
+        eprintln!("パイプ送信エラー(flush): {e}");
+        std::process::exit(1);
+    }
     let user = (&mut *host as *mut Host).cast::<std::ffi::c_void>();
     let mut emu = Emu::new(user);
 
@@ -95,37 +100,64 @@ fn main() {
     let (seg, off) = emu.call60(0x06, 0, 0);
     println!("曲バッファ {seg:04X}:{off:04X} へ {} バイト書込", song.len());
     emu.load_mem(seg, off, &song);
-    emu.call60(0x00, 0, 0); // MUSIC_START
+    emu.call60(0x00, 0, 0); // MUSIC_START(ここで Timer A/B のレートが確定。0x27 はまだ転送マスク)
     let _ = host.flush_drain();
-    println!("演奏開始(テンポは曲の Timer B 値から自動 / PMDHOST_TEMPO={tempo_mul} で微調整)。Ctrl-C で停止。");
 
-    // --- tick ループ(各 tick を ForceTimeout で即適用、テンポ間隔で待つ)---
-    let max_ticks: Option<u64> = if dry { Some(40) } else { None };
-    let mut next = Instant::now();
+    // --- board-paced ---
+    // 各イベント(A/B)のバッチをボードのバッファ A/B へ積むだけ。ボードの実タイマ /IRQ が drain。
+    // ホストは driver キュー長で背圧をかけ、毎イベントの往復はしない(処理落ち対策)。
+    host.arm_board(); // 以降 0x27 を転送(ボードのタイマ始動準備)
+    // 最初のイベントは ForceTimeout で即適用 → ボードの TimerA/B が起動。
+    if host.next_event().is_some() {
+        emu.call_vec(timer_vec, 0, 0, 0);
+        let _ = host.flush_drain();
+    }
+    println!("演奏開始(board-paced: ボードのタイマがテンポを律速)。Ctrl-C で停止。");
+
+    // ドライランは多めに回してバッチサイズ分布を採取(実機運用は無限)。
+    let dry_ticks: u64 = std::env::var("PMDHOST_DRYTICKS").ok().and_then(|s| s.parse().ok()).unwrap_or(30000);
+    let max_ticks: Option<u64> = if dry { Some(dry_ticks) } else { None };
     let mut t: u64 = 0;
+    let status_poll = std::env::var("PMDHOST_STATUS").is_ok();
+    let mut last_st2: u8 = 0;
     loop {
-        host.arm_timer_b();
-        emu.call_vec(timer_vec, 0, 0, 0); // opnint → FM_Timer_main(1 tick)
-        if let Err(e) = host.flush_drain() {
+        if host.next_event().is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            continue;
+        }
+        // 先回りしすぎないよう driver キュー長で背圧(8 イベントごとに確認)。
+        if !dry && t % 8 == 0 {
+            match host.queue_size() {
+                Ok(mut q) => {
+                    while q > queue_high {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        q = host.queue_size().unwrap_or(0);
+                    }
+                }
+                Err(e) => { eprintln!("キュー問い合わせエラー: {e}"); break; }
+            }
+        }
+        emu.call_vec(timer_vec, 0, 0, 0); // opnint → FM_Timer_main(該当タイマ)
+        // 任意: 演奏状態の監視(ST2 はループ回数, 小節 は GET_SYOUSETU)。
+        if dry && status_poll && t % 100 == 0 {
+            let (s1, s2) = emu.get_status();
+            if s2 != last_st2 || t % 20000 == 0 {
+                let syousetu = emu.call60_ax(0x05, 0, 0); // GET_SYOUSETU(小節カウンタ)
+                println!("[status] t={t} ST1={s1:02X} ST2(ループ数)={s2:02X} 小節={syousetu}");
+                last_st2 = s2;
+            }
+        }
+        if let Err(e) = host.end_batch() {
             eprintln!("パイプ送信エラー: {e}");
             break;
         }
         t += 1;
         if let Some(m) = max_ticks {
             if t >= m {
-                println!("\n[dry-run] {t} tick 完了");
+                println!("[dry-run] {t} イベント完了。バッチサイズ統計:");
+                host.print_stats();
                 break;
             }
-            continue;
-        }
-        // テンポ間隔で待つ(0x26 を捕獲しているので自動追従)。絶対時刻でジッタ蓄積を防ぐ。
-        let us = (host.tick_base_micros() as f64 * tempo_mul) as u64;
-        next += std::time::Duration::from_micros(us.max(1));
-        let now = Instant::now();
-        if next > now {
-            std::thread::sleep(next - now);
-        } else {
-            next = now;
         }
     }
 }

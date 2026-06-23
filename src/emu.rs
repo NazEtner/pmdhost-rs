@@ -51,6 +51,8 @@ unsafe extern "C" {
     fn emu_find_timer_vec(emu: *mut EmuRaw) -> i32;
     fn emu_call_vec(emu: *mut EmuRaw, vec: u8, ah: u8, al: u8, dx: u16, out_ds: *mut u16, out_dx: *mut u16);
     fn emu_done(emu: *mut EmuRaw);
+    fn emu_get_status(emu: *mut EmuRaw) -> u16;
+    fn emu_call60_ax(emu: *mut EmuRaw, ah: u8, al: u8, dx: u16) -> u16;
 }
 
 pub struct Emu {
@@ -93,6 +95,17 @@ impl Emu {
     pub fn find_timer_vec(&mut self) -> Option<u8> {
         let v = unsafe { emu_find_timer_vec(self.raw) };
         if v < 0 { None } else { Some(v as u8) }
+    }
+
+    /// GET_STATUS(AH=0Ah)。戻り (ST1, ST2)。ST2 はループ回数(0xFF で曲終了)。
+    pub fn get_status(&mut self) -> (u8, u8) {
+        let ax = unsafe { emu_get_status(self.raw) };
+        ((ax >> 8) as u8, ax as u8)
+    }
+
+    /// 任意 INT60 を呼び AX を返す(GET_SYOUSETU 等の状態監視用)。
+    pub fn call60_ax(&mut self, ah: u8, al: u8, dx: u16) -> u16 {
+        unsafe { emu_call60_ax(self.raw, ah, al, dx) }
     }
 
     /// 任意ベクタを1回呼ぶ(タイマ ISR 駆動)。

@@ -87,7 +87,10 @@ void emu_run_install(x86emu_t *emu) {
     x86emu_set_seg_register(emu, emu->x86.R_DS_SEL, LOADSEG);
     x86emu_set_seg_register(emu, emu->x86.R_ES_SEL, LOADSEG);
     emu->x86.R_IP = 0x100; emu->x86.R_SP = 0xFFFE;
-    emu->max_instr = 30000000;
+    // max_instr は R_TSC(累積命令数, リセットされない)との絶対比較なので、毎回 R_TSC からの
+    // 相対予算で設定する。絶対値固定だと累積が閾値を超えた時点で以後の run が即 break して何も
+    // 実行されなくなる(=演奏フリーズの原因だった)。
+    emu->max_instr = emu->x86.R_TSC + 30000000;
     x86emu_run(emu, X86EMU_RUN_MAX_INSTR);
 }
 
@@ -100,7 +103,7 @@ void emu_call60(x86emu_t *emu, uint8_t ah, uint8_t al, uint16_t dx, uint16_t *ou
     x86emu_set_seg_register(emu, emu->x86.R_ES_SEL, LOADSEG);
     emu->x86.R_IP = 0; emu->x86.R_SP = 0xFFF0;
     emu->x86.R_AH = ah; emu->x86.R_AL = al; emu->x86.R_DX = dx;
-    emu->max_instr = 5000000;
+    emu->max_instr = emu->x86.R_TSC + 5000000; // R_TSC 相対(理由は emu_run_install 参照)
     x86emu_run(emu, X86EMU_RUN_MAX_INSTR);
     if (out_ds) *out_ds = emu->x86.R_DS;
     if (out_dx) *out_dx = emu->x86.R_DX;
@@ -134,10 +137,30 @@ void emu_call_vec(x86emu_t *emu, uint8_t vec, uint8_t ah, uint8_t al, uint16_t d
     emu->x86.R_IP = 0; emu->x86.R_SP = 0xFFF0;
     emu->x86.R_AH = ah; emu->x86.R_AL = al; emu->x86.R_DX = dx;
     emu->x86.R_FLG |= 0x200; // IF=1
-    emu->max_instr = 5000000;
+    emu->max_instr = emu->x86.R_TSC + 5000000; // R_TSC 相対(理由は emu_run_install 参照)
     x86emu_run(emu, X86EMU_RUN_MAX_INSTR);
     if (out_ds) *out_ds = emu->x86.R_DS;
     if (out_dx) *out_dx = emu->x86.R_DX;
+}
+
+// 任意の INT60(AH 指定)を呼び AX を返す(状態監視 GET_STATUS/GET_SYOUSETU 用)。
+uint16_t emu_call60_ax(x86emu_t *emu, uint8_t ah, uint8_t al, uint16_t dx) {
+    emu->x86.mode &= ~0x80u;
+    wb(emu, STUBSEG << 4, 0xCD); wb(emu, (STUBSEG << 4) + 1, 0x60); wb(emu, (STUBSEG << 4) + 2, 0xF4);
+    x86emu_set_seg_register(emu, emu->x86.R_CS_SEL, STUBSEG);
+    x86emu_set_seg_register(emu, emu->x86.R_SS_SEL, LOADSEG);
+    x86emu_set_seg_register(emu, emu->x86.R_DS_SEL, LOADSEG);
+    x86emu_set_seg_register(emu, emu->x86.R_ES_SEL, LOADSEG);
+    emu->x86.R_IP = 0; emu->x86.R_SP = 0xFFF0;
+    emu->x86.R_AH = ah; emu->x86.R_AL = al; emu->x86.R_DX = dx;
+    emu->max_instr = emu->x86.R_TSC + 5000000; // R_TSC 相対(理由は emu_run_install 参照)
+    x86emu_run(emu, X86EMU_RUN_MAX_INSTR);
+    return emu->x86.R_AX;
+}
+
+// INT60 AH=0Ah(GET_STATUS)を呼び AX(AH=ST1/AL=ST2)を返す。
+uint16_t emu_get_status(x86emu_t *emu) {
+    return emu_call60_ax(emu, 0x0A, 0, 0);
 }
 
 void emu_done(x86emu_t *emu) { x86emu_done(emu); }
