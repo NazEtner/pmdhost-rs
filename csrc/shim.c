@@ -20,6 +20,8 @@ typedef struct {
 } emu_regs_t;
 // 戻り値: 0=未処理(既定IVT経由) / 1=処理済み / 2=処理済み+停止
 extern int rust_intr(void *user, uint8_t num, emu_regs_t *r);
+// エミュ内部(PMD)の DOS 文字出力をホスト端末へ(色付けは Rust 側)
+extern void rust_dos_print(void *user, const uint8_t *p, uint32_t len);
 
 static x86emu_memio_handler_t g_default_memio;
 
@@ -33,6 +35,25 @@ static unsigned shim_memio(x86emu_t *emu, u32 addr, u32 *val, unsigned type) {
 
 static int shim_intr(x86emu_t *emu, u8 num, unsigned type) {
     (void)type;
+    // [PMD バナー] DOS INT 21h の文字出力を横取りしてホスト端末へ流す(install 時のバナー等)。
+    // フラグ処理は従来通り rust_intr(dos) に任せ、ここは出力だけ。
+    if (num == 0x21) {
+        unsigned ah = emu->x86.R_AH;
+        if (ah == 0x09) { // 文字列出力($終端)
+            uint32_t base = ((uint32_t)emu->x86.R_DS << 4) + (emu->x86.R_DX & 0xffff);
+            uint8_t buf[512];
+            int n = 0;
+            while (n < (int)sizeof(buf)) {
+                uint8_t c = (uint8_t)x86emu_read_byte(emu, base + n);
+                if (c == '$') break;
+                buf[n++] = c;
+            }
+            rust_dos_print(emu->private, buf, (uint32_t)n);
+        } else if (ah == 0x02) { // 1文字出力(DL)
+            uint8_t c = (uint8_t)(emu->x86.R_DX & 0xff);
+            rust_dos_print(emu->private, &c, 1);
+        }
+    }
     emu_regs_t r;
     r.ax = emu->x86.R_AX; r.bx = emu->x86.R_BX; r.cx = emu->x86.R_CX; r.dx = emu->x86.R_DX;
     r.si = emu->x86.R_SI; r.di = emu->x86.R_DI; r.bp = emu->x86.R_BP; r.sp = emu->x86.R_SP;

@@ -218,3 +218,55 @@ pub extern "C" fn rust_intr(user: *mut c_void, num: u8, regs: *mut EmuRegs) -> i
         _ => 1,
     }
 }
+
+// PMD バナーは Shift-JIS(cp932)。Windows の std stdout は非 UTF-8 バイトで panic するので、
+// OS の変換 API で cp932 → UTF-8 にしてから出す。
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn MultiByteToWideChar(cp: u32, flags: u32, mb: *const u8, cb: i32, wc: *mut u16, cch: i32) -> i32;
+    fn WideCharToMultiByte(
+        cp: u32, flags: u32, wc: *const u16, cch: i32,
+        mb: *mut u8, cb: i32, def: *const u8, used: *mut i32,
+    ) -> i32;
+}
+
+/// Shift-JIS(cp932) バイト列を UTF-8 へ変換。失敗時は lossy で UTF-8 として扱う(panic 回避)。
+fn cp932_to_utf8(src: &[u8]) -> Vec<u8> {
+    const CP_932: u32 = 932;
+    const CP_UTF8: u32 = 65001;
+    if src.is_empty() {
+        return Vec::new();
+    }
+    unsafe {
+        let wlen = MultiByteToWideChar(CP_932, 0, src.as_ptr(), src.len() as i32, std::ptr::null_mut(), 0);
+        if wlen <= 0 {
+            return String::from_utf8_lossy(src).into_owned().into_bytes();
+        }
+        let mut wide = vec![0u16; wlen as usize];
+        MultiByteToWideChar(CP_932, 0, src.as_ptr(), src.len() as i32, wide.as_mut_ptr(), wlen);
+        let ulen = WideCharToMultiByte(CP_UTF8, 0, wide.as_ptr(), wlen, std::ptr::null_mut(), 0, std::ptr::null(), std::ptr::null_mut());
+        if ulen <= 0 {
+            return String::from_utf8_lossy(src).into_owned().into_bytes();
+        }
+        let mut utf8 = vec![0u8; ulen as usize];
+        WideCharToMultiByte(CP_UTF8, 0, wide.as_ptr(), wlen, utf8.as_mut_ptr(), ulen, std::ptr::null(), std::ptr::null_mut());
+        utf8
+    }
+}
+
+/// shim から呼ばれる: エミュ内部(PMD)が DOS INT 21h(AH=09h/02h)で出した文字列をホストの
+/// ターミナルへ流す。ホスト自身の出力と区別できるよう色を変える(明るい緑)。cp932→UTF-8 変換済み。
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_dos_print(_user: *mut c_void, ptr: *const u8, len: u32) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    let src = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+    let utf8 = cp932_to_utf8(src);
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(b"\x1b[92m"); // 明るい緑 = エミュ内部(PMD)出力
+    let _ = out.write_all(&utf8);
+    let _ = out.write_all(b"\x1b[0m");
+    let _ = out.flush();
+}

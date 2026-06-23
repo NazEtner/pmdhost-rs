@@ -27,8 +27,30 @@ unsafe extern "system" {
     fn timeBeginPeriod(u_period: u32) -> u32;
 }
 
+// コンソールの ANSI(VT)処理を有効化(エミュ出力の色付け用。Windows Terminal は元から対応、
+// 旧 conhost でも有効化しておく)。
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetStdHandle(n_std_handle: u32) -> *mut std::ffi::c_void;
+    fn GetConsoleMode(h: *mut std::ffi::c_void, mode: *mut u32) -> i32;
+    fn SetConsoleMode(h: *mut std::ffi::c_void, mode: u32) -> i32;
+}
+
+fn enable_vt() {
+    const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+    const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
+    unsafe {
+        let h = GetStdHandle(STD_OUTPUT_HANDLE);
+        let mut mode = 0u32;
+        if GetConsoleMode(h, &mut mode) != 0 {
+            SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
+}
+
 fn main() {
     unsafe { timeBeginPeriod(1) };
+    enable_vt();
 
     let song_path = match std::env::args().nth(1) {
         Some(p) => p,
