@@ -118,6 +118,9 @@ void emu_run_install(x86emu_t *emu) {
 // INT 60h を1回呼ぶ。結果の DS:DX を out_ds/out_dx へ返す(AH=06h 等で使用)。
 void emu_call60(x86emu_t *emu, uint8_t ah, uint8_t al, uint16_t dx, uint16_t *out_ds, uint16_t *out_dx) {
     emu->x86.mode &= ~0x80u; // HALTED 解除
+    // スタブを int 60h に書き直す(emu_call_vec が int <vec> に書き換えるので、毎回戻さないと
+    // call_vec の後に call60 が間違って timer vec を実行してしまう=fade/stop が効かない原因だった)。
+    wb(emu, STUBSEG << 4, 0xCD); wb(emu, (STUBSEG << 4) + 1, 0x60); wb(emu, (STUBSEG << 4) + 2, 0xF4);
     x86emu_set_seg_register(emu, emu->x86.R_CS_SEL, STUBSEG);
     x86emu_set_seg_register(emu, emu->x86.R_SS_SEL, LOADSEG);
     x86emu_set_seg_register(emu, emu->x86.R_DS_SEL, LOADSEG);

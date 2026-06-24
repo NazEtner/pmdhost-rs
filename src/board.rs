@@ -132,10 +132,31 @@ impl Host {
         self.timer_armed = true;
     }
 
+    /// 曲切替時に opna タイマモデル・SSG シャドウ・arm 状態を初期化。
+    /// - opna: 新曲の MUSIC_START が NA/NB/0x27 を書き直すので前曲の next_a/next_b/Load を持ち越さない。
+    /// - ssg: 0x07(ミキサ)は get07 の read-modify-write。シャドウを残すと新曲の init RMW に影響する。
+    /// - timer_armed=false: これを残すと MUSIC_START の 0x27 がマスクされず LOAD ビットが 1 のままになり、
+    ///   first event の 0x3F で LOAD の 0→1 エッジが立たない=ボードの Timer がリロードされず前曲の位相が
+    ///   残る(最初の音がずれて伸びる)。false に戻すと init で LOAD=0(停止)→ first event で 0→1 でクリーンに
+    ///   リロードされる(初回再生と同じ挙動)。
+    pub fn reset_timers(&mut self) {
+        self.opna = Opna::new();
+        self.ssg = [0; 16];
+        self.timer_armed = false;
+    }
+
+    /// 以降の emit 先を バッファB(音楽)に戻す。MUSIC_START 等の init 書き込み(タイマイベント外)は
+    /// 音楽=Timer B 扱いにすべきだが、cur_intsel は直前の next_event で A になっていることがある。
+    /// リセットしないと曲切替時に音楽 init がドラム側バッファA(Timer A ペース)に積まれ最初の音が壊れる。
+    pub fn reset_intsel_to_b(&mut self) {
+        self.cur_intsel = 0;
+    }
+
     /// ドライランのバッチサイズ統計を表示。
     pub fn print_stats(&self) {
         self.pipe.print_stats();
     }
+
 
     /// 次のイベント(A/B)。opna のフラグを立て、書き込み先バッファ(IntSelect)も設定する。
     pub fn next_event(&mut self) -> Option<Timer> {
