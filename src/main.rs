@@ -19,7 +19,8 @@ use pipe::Pipe;
 static PMD_BIN: &[u8] = include_bytes!("../assets/pmdymf.bin");
 
 // 先読み量(driver.exe の送信キュー上限)。大きいほどボード前に曲を溜め込み、重い区間で
-// バッファ枯れ(カクつき)しにくくなる。PMDHOST_QUEUE で調整可(既定 4000 ≒ 30秒強の先読み)。
+// バッファ枯れ(カクつき)しにくくなる一方、操作(stop/fade等)の効きがその分遅れる。
+// PMDHOST_QUEUE で調整可(既定 450 ≒ 0.3秒の先読み。実機で 450 でも安定再生を確認、操作レスポンス優先)。
 
 // Windows のタイマ分解能を 1ms に上げる(既定 ~15.6ms だと数 ms のテンポ間隔が出せない)。
 #[link(name = "winmm")]
@@ -63,7 +64,7 @@ fn main() {
     let queue_high: u32 = std::env::var("PMDHOST_QUEUE")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(4000);
+        .unwrap_or(450);
 
     let song = match std::fs::read(&song_path) {
         Ok(d) => d,
