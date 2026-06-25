@@ -17,6 +17,11 @@ PMD のタイマ割り込み（Timer A=SSG ドラム / Timer B=音楽）を 1 ti
 送信キュー長（`SizeRequest`）で背圧をかけ、先回りしすぎないようにする。詳細は [src/board.rs](src/board.rs)・
 [src/main.rs](src/main.rs) を参照。
 
+## 通信プロトコル
+
+PMD 本体（エミュ上）↔ pmdhost-rs ↔ `driver.exe` の各境界でのやり取り（I/O トラップ・INT 60h・
+名前付きパイプの 4 バイト `PacketSend` など）は [docs/PROTOCOL.md](docs/PROTOCOL.md) を参照。
+
 ## ビルド（WSL2 から Windows 向けにクロスビルド）
 
 実行は Windows 上だが、ビルドは WSL2(Linux)で行う。MinGW を Windows 側に入れずに済む。
@@ -56,10 +61,19 @@ pmdhost-rs.exe <song.M>
 | `PMDHOST_QUEUE` | `450` | 先読みキュー長（driver.exe の送信キュー上限）。大きいほど重い区間でバッファ枯れ（カクつき）しにくいが、stop/fade 等の操作レスポンスが遅れる。約 450 ≒ 0.3 秒の先読み。 |
 | `PMDHOST_DRYTICKS` | `30000` | ドライラン時に回す tick 数。 |
 | `PMDHOST_STATUS` | （未設定） | ドライラン中に演奏状態（ループ回数・小節カウンタ）を定期表示。 |
+| `PMDHOST_BIND` | `127.0.0.1:5288` | 制御 TCP の待受アドレス。既定は localhost のみ。外部公開は明示的な opt-in（例 `0.0.0.0:5288`）。 |
+| `PMDHOST_MUSICDIR` | （未設定） | 制御 TCP（リモート）からの `play` で許可する曲ディレクトリ。未設定だとリモート `play` は拒否。stdin プロンプトからの `play` は無制限。 |
 
 ## ライセンス
 
-- `vendor/libx86emu/` は libx86emu のソース同梱。ライセンスは同ディレクトリの `LICENSE` を参照
-  （SciTech/SUSE 由来の permissive ライセンス）。
-- `vendor/pmd/` は PMD（KAJA 氏作、作者により自由利用可）のソース同梱。YMF288 向けの変更点は
+本リポジトリ独自のソース（`src/`・`build.rs`・`csrc/`・`tools/`・`docs/`・ビルド設定）は
+**MIT License**（Copyright (c) 2026 Nananami(NazEt)）。詳細は [LICENSE](LICENSE) を参照。
+
+同梱のサードパーティ製コンポーネントは各々別ライセンスで、MIT の対象外：
+
+- `vendor/libx86emu/` は libx86emu のソース同梱。ライセンスは同ディレクトリの
+  [LICENSE](vendor/libx86emu/LICENSE) を参照（SciTech/SUSE 由来の permissive ライセンス）。
+- `vendor/pmd/` および `assets/pmdymf.bin` は PMD（KAJA 氏作）のソース／生成物。著作権は
+  KAJA 氏に帰属し、作者により自由利用が許諾されています（2019/12/25 全ソース公開）。原典の許諾文は
+  [vendor/pmd/README_PMD.txt](vendor/pmd/README_PMD.txt)、YMF288 向けの変更点は
   [vendor/pmd/BUILD.md](vendor/pmd/BUILD.md) を参照。
