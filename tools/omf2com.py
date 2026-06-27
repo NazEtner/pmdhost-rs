@@ -67,8 +67,10 @@ for rt,b in recs(data):
 applied=0;skipped=[]
 for loc,M,lt,tdisp in fixups:
     if lt in (1,5):  # 16-bit offset
+        # OMF: 最終値 = 既存データ(addend) + ターゲット変位。addend を足し忘れると
+        # `offset rdat-1` 等の負の addend が消えて off-by-one になる(リズム個別音量バグの原因)。
         cur=SEG[loc]|(SEG[loc+1]<<8)
-        val=tdisp&0xffff
+        val=(cur+tdisp)&0xffff
         SEG[loc]=val&0xff; SEG[loc+1]=(val>>8)&0xff; applied+=1
     else:
         skipped.append((loc,lt,M))
